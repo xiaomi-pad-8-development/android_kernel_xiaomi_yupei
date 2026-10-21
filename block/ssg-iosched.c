@@ -5,13 +5,11 @@
  *
  *  Copyright (C) 2021 Jisoo Oh <jisoo2146.oh@samsung.com>
  *  Copyright (C) 2021 Manjong Lee <mj0123.lee@samsung.com>
- *  Copyright (C) 2021 Changheun Lee <nanich.lee@samsung.com>
  */
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/blkdev.h>
 #include <linux/blk-mq.h>
-#include <linux/elevator.h>
 #include <linux/bio.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -20,46 +18,30 @@
 #include <linux/rbtree.h>
 #include <linux/sbitmap.h>
 
+#include <trace/events/block.h>
+
+#include "elevator.h"
 #include "blk.h"
 #include "blk-mq.h"
 #include "blk-mq-debugfs.h"
-#include "blk-mq-tag.h"
 #include "blk-mq-sched.h"
-#include "ssg-cgroup.h"
 
 #if IS_ENABLED(CONFIG_BLK_SEC_STATS)
-extern void blk_sec_stats_account_init(struct request_queue *q);
-extern void blk_sec_stats_account_exit(struct elevator_queue *eq);
-extern void blk_sec_stats_account_io_done(
-		struct request *rq, unsigned int data_size,
-		pid_t tgid, const char *tg_name, u64 tg_start_time);
+extern void blk_sec_account_process_IO(struct bio *bio);
 #else
-#define blk_sec_stats_account_init(q)	do {} while(0)
-#define blk_sec_stats_account_exit(eq)	do {} while(0)
-#define blk_sec_stats_account_io_done(rq, size, tgid, name, time) do {} while(0)
+#define blk_sec_account_process_IO(bio)	do {} while(0)
 #endif
-
-#define MAX_ASYNC_WRITE_RQS	8
 
 static const int read_expire = HZ / 2;		/* max time before a read is submitted. */
 static const int write_expire = 5 * HZ;		/* ditto for writes, these limits are SOFT! */
 static const int max_write_starvation = 2;	/* max times reads can starve a write */
-static const int congestion_threshold = 90;	/* percentage of congestion threshold */
-static const int max_tgroup_io_ratio = 50;	/* maximum service ratio for each thread group */
-static const int max_async_write_ratio = 25;	/* maximum service ratio for async write */
-
-struct ssg_request_info {
-	pid_t tgid;
-	char tg_name[TASK_COMM_LEN];
-	u64 tg_start_time;
-
-	struct blkcg_gq *blkg;
-
-	unsigned int data_size;
-};
+static const int async_write_percent = 25;	/* max tags percentage for async write */
+static const unsigned int max_async_write_tags = 8;	/* max tags for async write. */
 
 struct ssg_data {
-	struct request_queue *queue;
+	/*
+	 * run time data
+	 */
 
 	/*
 	 * requests are present on both sort_list and fifo_list
@@ -71,7 +53,7 @@ struct ssg_data {
 	 * next in sort order. read, write or both are NULL
 	 */
 	struct request *next_rq[2];
-	unsigned int starved_writes;	/* times reads have starved writes */
+	unsigned int starved_writes;		/* times reads have starved writes */
 
 	/*
 	 * settings that change how the i/o scheduler behaves
@@ -79,22 +61,8 @@ struct ssg_data {
 	int fifo_expire[2];
 	int max_write_starvation;
 	int front_merges;
-
-	/*
-	 * to control request allocation
-	 */
-	atomic_t allocated_rqs;
-	atomic_t async_write_rqs;
-	int congestion_threshold_rqs;
-	int max_tgroup_rqs;
-	int max_async_write_rqs;
-	unsigned int tgroup_shallow_depth;	/* thread group shallow depth for each tag map */
-	unsigned int async_write_shallow_depth;	/* async write shallow depth for each tag map */
-
-	/*
-	 * I/O context information for each request
-	 */
-	struct ssg_request_info *rq_info;
+	int async_write_depth;	/* async write depth for each tag map */
+	atomic_t async_write_cnt;
 
 	spinlock_t lock;
 	spinlock_t zone_lock;
@@ -134,41 +102,6 @@ static inline void ssg_del_rq_rb(struct ssg_data *ssg, struct request *rq)
 		ssg->next_rq[data_dir] = ssg_latter_request(rq);
 
 	elv_rb_del(ssg_rb_root(ssg, rq), rq);
-}
-
-static inline struct ssg_request_info *ssg_rq_info(struct ssg_data *ssg,
-		struct request *rq)
-{
-	if (unlikely(!ssg->rq_info))
-		return NULL;
-
-	if (unlikely(!rq))
-		return NULL;
-
-	if (unlikely(rq->internal_tag < 0))
-		return NULL;
-
-	if (unlikely(rq->internal_tag >= rq->q->nr_requests))
-		return NULL;
-
-	return &ssg->rq_info[rq->internal_tag];
-}
-
-static inline void set_thread_group_info(struct ssg_request_info *rqi)
-{
-	struct task_struct *gleader = current->group_leader;
-
-	rqi->tgid = task_tgid_nr(gleader);
-	strncpy(rqi->tg_name, gleader->comm, TASK_COMM_LEN - 1);
-	rqi->tg_name[TASK_COMM_LEN - 1] = '\0';
-	rqi->tg_start_time = gleader->start_time;
-}
-
-static inline void clear_thread_group_info(struct ssg_request_info *rqi)
-{
-	rqi->tgid = 0;
-	rqi->tg_name[0] = '\0';
-	rqi->tg_start_time = 0;
 }
 
 /*
@@ -431,44 +364,12 @@ static struct request *ssg_dispatch_request(struct blk_mq_hw_ctx *hctx)
 {
 	struct ssg_data *ssg = hctx->queue->elevator->elevator_data;
 	struct request *rq;
-	struct ssg_request_info *rqi;
 
 	spin_lock(&ssg->lock);
 	rq = __ssg_dispatch_request(ssg);
 	spin_unlock(&ssg->lock);
 
-	rqi = ssg_rq_info(ssg, rq);
-	if (likely(rqi))
-		rqi->data_size = blk_rq_bytes(rq);
-
 	return rq;
-}
-
-static void ssg_completed_request(struct request *rq, u64 now)
-{
-	struct ssg_data *ssg = rq->q->elevator->elevator_data;
-	struct ssg_request_info *rqi;
-
-	rqi = ssg_rq_info(ssg, rq);
-	if (likely(rqi))
-		blk_sec_stats_account_io_done(rq, rqi->data_size,
-				rqi->tgid, rqi->tg_name, rqi->tg_start_time);
-}
-
-static void ssg_set_shallow_depth(struct ssg_data *ssg, struct blk_mq_tags *tags)
-{
-	unsigned int depth = tags->bitmap_tags->sb.depth;
-	unsigned int map_nr = tags->bitmap_tags->sb.map_nr;
-
-	ssg->max_async_write_rqs = depth * max_async_write_ratio / 100U;
-	ssg->max_async_write_rqs =
-		min_t(int, ssg->max_async_write_rqs, MAX_ASYNC_WRITE_RQS);
-	ssg->async_write_shallow_depth =
-		max_t(unsigned int, ssg->max_async_write_rqs / map_nr, 1);
-
-	ssg->max_tgroup_rqs = depth * max_tgroup_io_ratio / 100U;
-	ssg->tgroup_shallow_depth =
-		max_t(unsigned int, ssg->max_tgroup_rqs / map_nr, 1);
 }
 
 static void ssg_depth_updated(struct blk_mq_hw_ctx *hctx)
@@ -476,87 +377,39 @@ static void ssg_depth_updated(struct blk_mq_hw_ctx *hctx)
 	struct request_queue *q = hctx->queue;
 	struct ssg_data *ssg = q->elevator->elevator_data;
 	struct blk_mq_tags *tags = hctx->sched_tags;
-	unsigned int depth = tags->bitmap_tags->sb.depth;
+	unsigned int depth = tags->bitmap_tags.sb.depth;
+	unsigned int map_nr = tags->bitmap_tags.sb.map_nr;
+	unsigned int async_write_depth;
 
-	ssg->congestion_threshold_rqs = depth * congestion_threshold / 100U;
+	async_write_depth = depth * async_write_percent / 100U;
+	async_write_depth = min(async_write_depth, max_async_write_tags);
 
-	kfree(ssg->rq_info);
-	ssg->rq_info = kmalloc(depth * sizeof(struct ssg_request_info),
-			GFP_KERNEL | __GFP_ZERO);
-	if (ZERO_OR_NULL_PTR(ssg->rq_info))
-		ssg->rq_info = NULL;
+	ssg->async_write_depth =
+		(async_write_depth / map_nr) ? (async_write_depth / map_nr) : 1;
 
-	ssg_set_shallow_depth(ssg, tags);
-	sbitmap_queue_min_shallow_depth(tags->bitmap_tags,
-			ssg->async_write_shallow_depth);
-
-	ssg_blkcg_depth_updated(hctx);
+	sbitmap_queue_min_shallow_depth(&tags->bitmap_tags,
+			ssg->async_write_depth);
 }
 
-static inline bool ssg_op_is_async_write(unsigned int op)
+static inline bool ssg_op_is_async_write(blk_opf_t op)
 {
-	return (op & REQ_OP_MASK) == REQ_OP_WRITE && !op_is_sync(op);
+	return op_is_write(op) && !op_is_sync(op);
 }
 
-static unsigned int ssg_async_write_shallow_depth(unsigned int op,
-		struct blk_mq_alloc_data *data)
+static void ssg_limit_depth(blk_opf_t opf, struct blk_mq_alloc_data *data)
 {
 	struct ssg_data *ssg = data->q->elevator->elevator_data;
 
-	if (!ssg_op_is_async_write(op))
-		return 0;
+	if (!ssg_op_is_async_write(opf))
+		return;
 
-	if (atomic_read(&ssg->async_write_rqs) < ssg->max_async_write_rqs)
-		return 0;
-
-	return ssg->async_write_shallow_depth;
-}
-
-static unsigned int ssg_tgroup_shallow_depth(struct blk_mq_alloc_data *data)
-{
-	struct ssg_data *ssg = data->q->elevator->elevator_data;
-	pid_t tgid = task_tgid_nr(current->group_leader);
-	int nr_requests = data->q->nr_requests;
-	int tgroup_rqs = 0;
-	int i;
-
-	if (unlikely(!ssg->rq_info))
-		return 0;
-
-	for (i = 0; i < nr_requests; i++)
-		if (tgid == ssg->rq_info[i].tgid)
-			tgroup_rqs++;
-
-	if (tgroup_rqs < ssg->max_tgroup_rqs)
-		return 0;
-
-	return ssg->tgroup_shallow_depth;
-}
-
-static void ssg_limit_depth(unsigned int op, struct blk_mq_alloc_data *data)
-{
-	struct ssg_data *ssg = data->q->elevator->elevator_data;
-	unsigned int shallow_depth = ssg_blkcg_shallow_depth(data->q);
-
-	shallow_depth = min_not_zero(shallow_depth,
-			ssg_async_write_shallow_depth(op, data));
-
-	if (atomic_read(&ssg->allocated_rqs) > ssg->congestion_threshold_rqs)
-		shallow_depth = min_not_zero(shallow_depth,
-				ssg_tgroup_shallow_depth(data));
-
-	data->shallow_depth = shallow_depth;
+	if (atomic_read(&ssg->async_write_cnt) > max_async_write_tags)
+		data->shallow_depth = ssg->async_write_depth;
 }
 
 static int ssg_init_hctx(struct blk_mq_hw_ctx *hctx, unsigned int hctx_idx)
 {
-	struct ssg_data *ssg = hctx->queue->elevator->elevator_data;
-	struct blk_mq_tags *tags = hctx->sched_tags;
-
-	ssg_set_shallow_depth(ssg, tags);
-	sbitmap_queue_min_shallow_depth(tags->bitmap_tags,
-			ssg->async_write_shallow_depth);
-
+	ssg_depth_updated(hctx);
 	return 0;
 }
 
@@ -564,15 +417,10 @@ static void ssg_exit_queue(struct elevator_queue *e)
 {
 	struct ssg_data *ssg = e->elevator_data;
 
-	ssg_blkcg_deactivate(ssg->queue);
-
 	BUG_ON(!list_empty(&ssg->fifo_list[READ]));
 	BUG_ON(!list_empty(&ssg->fifo_list[WRITE]));
 
-	kfree(ssg->rq_info);
 	kfree(ssg);
-
-	blk_sec_stats_account_exit(e);
 }
 
 /*
@@ -594,7 +442,6 @@ static int ssg_init_queue(struct request_queue *q, struct elevator_type *e)
 	}
 	eq->elevator_data = ssg;
 
-	ssg->queue = q;
 	INIT_LIST_HEAD(&ssg->fifo_list[READ]);
 	INIT_LIST_HEAD(&ssg->fifo_list[WRITE]);
 	ssg->sort_list[READ] = RB_ROOT;
@@ -603,25 +450,12 @@ static int ssg_init_queue(struct request_queue *q, struct elevator_type *e)
 	ssg->fifo_expire[WRITE] = write_expire;
 	ssg->max_write_starvation = max_write_starvation;
 	ssg->front_merges = 1;
-
-	atomic_set(&ssg->allocated_rqs, 0);
-	atomic_set(&ssg->async_write_rqs, 0);
-	ssg->congestion_threshold_rqs =
-		q->nr_requests * congestion_threshold / 100U;
-	ssg->rq_info = kmalloc(q->nr_requests * sizeof(struct ssg_request_info),
-			GFP_KERNEL | __GFP_ZERO);
-	if (ZERO_OR_NULL_PTR(ssg->rq_info))
-		ssg->rq_info = NULL;
-
+	atomic_set(&ssg->async_write_cnt, 0);
 	spin_lock_init(&ssg->lock);
 	spin_lock_init(&ssg->zone_lock);
 	INIT_LIST_HEAD(&ssg->dispatch);
 
-	ssg_blkcg_activate(q);
-
 	q->elevator = eq;
-
-	blk_sec_stats_account_init(q);
 	return 0;
 }
 
@@ -641,10 +475,6 @@ static int ssg_request_merge(struct request_queue *q, struct request **rq,
 
 		if (elv_bio_merge_ok(__rq, bio)) {
 			*rq = __rq;
-
-			if (blk_discard_mergable(__rq))
-				return ELEVATOR_DISCARD_MERGE;
-
 			return ELEVATOR_FRONT_MERGE;
 		}
 	}
@@ -653,7 +483,7 @@ static int ssg_request_merge(struct request_queue *q, struct request **rq,
 }
 
 static bool ssg_bio_merge(struct request_queue *q, struct bio *bio,
-		unsigned int nr_segs)
+			 unsigned int nr_segs)
 {
 	struct ssg_data *ssg = q->elevator->elevator_data;
 	struct request *free = NULL;
@@ -673,12 +503,11 @@ static bool ssg_bio_merge(struct request_queue *q, struct bio *bio,
  * add rq to rbtree and fifo
  */
 static void ssg_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
-			      bool at_head)
+			      blk_insert_t flags, struct list_head *free)
 {
 	struct request_queue *q = hctx->queue;
 	struct ssg_data *ssg = q->elevator->elevator_data;
 	const int data_dir = rq_data_dir(rq);
-
 
 	/*
 	 * This may be a requeue of a write request that has locked its
@@ -686,13 +515,13 @@ static void ssg_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 	 */
 	blk_req_zone_write_unlock(rq);
 
-	if (blk_mq_sched_try_insert_merge(q, rq))
+	if (blk_mq_sched_try_insert_merge(q, rq, free))
 		return;
 
-	blk_mq_sched_request_inserted(rq);
+	trace_block_rq_insert(rq);
 
-	if (at_head || blk_rq_is_passthrough(rq)) {
-		if (at_head)
+	if ((flags & BLK_MQ_INSERT_AT_HEAD) || blk_rq_is_passthrough(rq)) {
+		if (flags & BLK_MQ_INSERT_AT_HEAD)
 			list_add(&rq->queuelist, &ssg->dispatch);
 		else
 			list_add_tail(&rq->queuelist, &ssg->dispatch);
@@ -714,10 +543,11 @@ static void ssg_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 }
 
 static void ssg_insert_requests(struct blk_mq_hw_ctx *hctx,
-			       struct list_head *list, bool at_head)
+			       struct list_head *list, blk_insert_t flags)
 {
 	struct request_queue *q = hctx->queue;
 	struct ssg_data *ssg = q->elevator->elevator_data;
+	LIST_HEAD(free);
 
 	spin_lock(&ssg->lock);
 	while (!list_empty(list)) {
@@ -725,34 +555,26 @@ static void ssg_insert_requests(struct blk_mq_hw_ctx *hctx,
 
 		rq = list_first_entry(list, struct request, queuelist);
 		list_del_init(&rq->queuelist);
-		ssg_insert_request(hctx, rq, at_head);
+		ssg_insert_request(hctx, rq, flags, &free);
 	}
 	spin_unlock(&ssg->lock);
+
+	blk_mq_free_requests(&free);
 }
 
 /*
- * Nothing to do here. This is defined only to ensure that .finish_request
- * method is called upon request completion.
+ * Ensure that .finish_request method is called upon request completion.
  */
 static void ssg_prepare_request(struct request *rq)
 {
 	struct ssg_data *ssg = rq->q->elevator->elevator_data;
-	struct ssg_request_info *rqi;
 
-	atomic_inc(&ssg->allocated_rqs);
-
-	rqi = ssg_rq_info(ssg, rq);
-	if (likely(rqi)) {
-		set_thread_group_info(rqi);
-
-		rcu_read_lock();
-		rqi->blkg = blkg_lookup(css_to_blkcg(blkcg_css()), rq->q);
-		ssg_blkcg_inc_rq(rqi->blkg);
-		rcu_read_unlock();
+	if (ssg_op_is_async_write(rq->cmd_flags)) {
+		atomic_inc(&ssg->async_write_cnt);
+		rq->elv.priv[0] = (void *)(uintptr_t)1;
+	} else {
+		rq->elv.priv[0] = NULL;
 	}
-
-	if (ssg_op_is_async_write(rq->cmd_flags))
-		atomic_inc(&ssg->async_write_rqs);
 }
 
 /*
@@ -761,44 +583,28 @@ static void ssg_prepare_request(struct request *rq)
  * spinlock so that the zone is never unlocked while ssg_fifo_request()
  * or ssg_next_request() are executing. This function is called for
  * all requests, whether or not these requests complete successfully.
- *
- * For a zoned block device, __ssg_dispatch_request() may have stopped
- * dispatching requests if all the queued requests are write requests directed
- * at zones that are already locked due to on-going write requests. To ensure
- * write request dispatch progress in this case, mark the queue as needing a
- * restart to ensure that the queue is run again after completion of the
- * request and zones being unlocked.
  */
 static void ssg_finish_request(struct request *rq)
 {
 	struct request_queue *q = rq->q;
 	struct ssg_data *ssg = q->elevator->elevator_data;
-	struct ssg_request_info *rqi;
 
 	if (blk_queue_is_zoned(q)) {
 		unsigned long flags;
 
 		spin_lock_irqsave(&ssg->zone_lock, flags);
 		blk_req_zone_write_unlock(rq);
-		if (!list_empty(&ssg->fifo_list[WRITE]))
-			blk_mq_sched_mark_restart_hctx(rq->mq_hctx);
+		if (!list_empty(&ssg->fifo_list[WRITE])) {
+			if (rq->mq_hctx)
+				blk_mq_sched_mark_restart_hctx(rq->mq_hctx);
+		}
 		spin_unlock_irqrestore(&ssg->zone_lock, flags);
 	}
 
-	if (unlikely(!(rq->rq_flags & RQF_ELVPRIV)))
-		return;
-
-	atomic_dec(&ssg->allocated_rqs);
-
-	rqi = ssg_rq_info(ssg, rq);
-	if (likely(rqi)) {
-		clear_thread_group_info(rqi);
-		ssg_blkcg_dec_rq(rqi->blkg);
-		rqi->blkg = NULL;
+	if (rq->elv.priv[0]) {
+		atomic_dec(&ssg->async_write_cnt);
+		rq->elv.priv[0] = NULL;
 	}
-
-	if (ssg_op_is_async_write(rq->cmd_flags))
-		atomic_dec(&ssg->async_write_rqs);
 }
 
 static bool ssg_has_work(struct blk_mq_hw_ctx *hctx)
@@ -838,8 +644,7 @@ SHOW_FUNCTION(ssg_read_expire_show, ssg->fifo_expire[READ], 1);
 SHOW_FUNCTION(ssg_write_expire_show, ssg->fifo_expire[WRITE], 1);
 SHOW_FUNCTION(ssg_max_write_starvation_show, ssg->max_write_starvation, 0);
 SHOW_FUNCTION(ssg_front_merges_show, ssg->front_merges, 0);
-SHOW_FUNCTION(ssg_tgroup_shallow_depth_show, ssg->tgroup_shallow_depth, 0);
-SHOW_FUNCTION(ssg_async_write_shallow_depth_show, ssg->async_write_shallow_depth, 0);
+SHOW_FUNCTION(ssg_async_write_depth_show, ssg->async_write_depth, 0);
 #undef SHOW_FUNCTION
 
 #define STORE_FUNCTION(__FUNC, __PTR, MIN, MAX, __CONV)			\
@@ -875,8 +680,7 @@ static struct elv_fs_entry ssg_attrs[] = {
 	SSG_ATTR(write_expire),
 	SSG_ATTR(max_write_starvation),
 	SSG_ATTR(front_merges),
-	SSG_ATTR_RO(tgroup_shallow_depth),
-	SSG_ATTR_RO(async_write_shallow_depth),
+	SSG_ATTR_RO(async_write_depth),
 	__ATTR_NULL
 };
 
@@ -989,25 +793,24 @@ static const struct blk_mq_debugfs_attr ssg_queue_debugfs_attrs[] = {
 #undef SSG_IOSCHED_QUEUE_DDIR_ATTRS
 #endif
 
-static struct elevator_type ssg_iosched = {
+static struct elevator_type ssg_sched = {
 	.ops = {
-		.insert_requests = ssg_insert_requests,
-		.dispatch_request = ssg_dispatch_request,
-		.completed_request = ssg_completed_request,
-		.prepare_request = ssg_prepare_request,
-		.finish_request = ssg_finish_request,
-		.next_request = elv_rb_latter_request,
-		.former_request = elv_rb_former_request,
-		.bio_merge = ssg_bio_merge,
-		.request_merge = ssg_request_merge,
-		.requests_merged = ssg_merged_requests,
-		.request_merged = ssg_request_merged,
-		.has_work = ssg_has_work,
-		.limit_depth = ssg_limit_depth,
-		.depth_updated = ssg_depth_updated,
-		.init_hctx = ssg_init_hctx,
-		.init_sched = ssg_init_queue,
-		.exit_sched = ssg_exit_queue,
+		.insert_requests	= ssg_insert_requests,
+		.dispatch_request	= ssg_dispatch_request,
+		.prepare_request	= ssg_prepare_request,
+		.finish_request		= ssg_finish_request,
+		.next_request		= elv_rb_latter_request,
+		.former_request		= elv_rb_former_request,
+		.bio_merge		= ssg_bio_merge,
+		.request_merge		= ssg_request_merge,
+		.requests_merged	= ssg_merged_requests,
+		.request_merged		= ssg_request_merged,
+		.has_work		= ssg_has_work,
+		.limit_depth		= ssg_limit_depth,
+		.depth_updated		= ssg_depth_updated,
+		.init_hctx		= ssg_init_hctx,
+		.init_sched		= ssg_init_queue,
+		.exit_sched		= ssg_exit_queue,
 	},
 
 #ifdef CONFIG_BLK_DEBUG_FS
@@ -1020,33 +823,21 @@ static struct elevator_type ssg_iosched = {
 	.elevator_owner = THIS_MODULE,
 };
 MODULE_ALIAS("ssg");
+MODULE_ALIAS("ssg-iosched");
 
-static int __init ssg_iosched_init(void)
+static int __init ssg_init(void)
 {
-	int ret;
-
-	ret = elv_register(&ssg_iosched);
-	if (ret)
-		return ret;
-
-	ret = ssg_blkcg_init();
-	if (ret) {
-		elv_unregister(&ssg_iosched);
-		return ret;
-	}
-
-	return ret;
+	return elv_register(&ssg_sched);
 }
 
-static void __exit ssg_iosched_exit(void)
+static void __exit ssg_exit(void)
 {
-	ssg_blkcg_exit();
-	elv_unregister(&ssg_iosched);
+	elv_unregister(&ssg_sched);
 }
 
-module_init(ssg_iosched_init);
-module_exit(ssg_iosched_exit);
+module_init(ssg_init);
+module_exit(ssg_exit);
 
 MODULE_AUTHOR("Jisoo Oh");
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("SSG IO Scheduler");
+MODULE_DESCRIPTION("SamSung Generic I/O scheduler");
