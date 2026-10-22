@@ -88,184 +88,160 @@ static unsigned char HID_MouseReportDescriptor[] = {
 	0xC0, //    End Collection
 };
 
-#define TOUCH_PAD_X_SIZE_DESC 2560
-#define TOUCH_PAD_Y_SIZE_DESC 1600
-#define MI_DISPLAY_X_SIZE_DESC 2560
-#define MI_DISPLAY_Y_SIZE_DESC 1600
 
 // touch:reportID(0x19)
 static unsigned char HID_TouchReportDescriptor[] = {
-	//-----------------------------------------------
-	0x05, 0x0D, // Usage Page (Digitizer)
-	0x09, 0x05, // Usage (0x05:Touch Pad; 0x04:Touch Screen)
-	0xA1, 0x01, // Collection (Application)
-	0x85, 0x19, //   Report ID (25)
-	//----------------------
-	// button
-	0x15, 0x00, //   Logical Minimum (0)
-	0x25, 0x01, //   Logical Maximum (1)
-	0x35, 0x00, //   Physical Minimum (0)
-	0x45, 0x01, //   Physical Maximum (1)
-	0x75, 0x01, //   Report Size (1)
-	0x95, 0x02, //   Report Count (2)
-	0x05, 0x09, //   Usage Page (Button)
-	0x09, 0x01, //   Usage (Button 1)
-	0x09, 0x02, //   Usage (Button 2)
-	0x81, 0x02, //   Input (Data,Var,Abs)
-	0x95, 0x06, //   Report Count (6)
-	0x81, 0x01, //   Input (Cnst,Var,Abs)
-	//----------------------
-	// touch Pad
-	0x05, 0x0D, //   Usage Page (Digitizer)
-	0x09, 0x22, //   Usage (Finger)
-	0xA1, 0x02, //   Collection (Logical)
-	0x09, 0x42, //     Usage (Tip Switch)
-	0x15, 0x00, //     Logical Minimum (0)
-	0x25, 0x01, //     Logical Maximum (1)
-	0x75, 0x01, //     Report Size (1)
-	0x95, 0x01, //     Report Count (1)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x09, 0x32, //     Usage (In Range)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x09, 0x47, //     Usage(Touch Valid)
-	0x81,
-	0x02, //     Input(Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x95, 0x05, //     Report Count (5)
-	0x81,
-	0x03, //     Input (Const,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x75, 0x08, //     Report Size (8)
-	0x09, 0x51, //     Usage (Contact identifier)
-	0x95, 0x01, //     Report Count (1)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x05, 0x01, //     Usage Page (Generic Desktop Ctrls)
-	0x15, 0x00, //     Logical Minimum (0)
-	0x26, (TOUCH_PAD_X_SIZE_DESC & 0xff),
-	((TOUCH_PAD_X_SIZE_DESC >> 8) & 0xff), //     Logical Maximum (3203)
-	0x75, 0x10, //     Report Size (16)
-	0x55, 0x0D, //     Uint Exponent(-3)
-	0x65, 0x13, //     Unit(Inch,Englinear)
-	0x09, 0x30, //     Usage (X)
-	0x35, 0x00, //     Physical Minimum (0)
-	0x46, (MI_DISPLAY_X_SIZE_DESC & 0xff),
-	((MI_DISPLAY_X_SIZE_DESC >> 8) & 0xff), //     Physical Maximum (400)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x09, 0x31, //     Usage (Y)
-	0x26, (TOUCH_PAD_Y_SIZE_DESC & 0xff),
-	((TOUCH_PAD_Y_SIZE_DESC >> 8) & 0xff), //     Logical Maximum (1884)
-	0x46, (MI_DISPLAY_Y_SIZE_DESC & 0xff),
-	((MI_DISPLAY_Y_SIZE_DESC >> 8) & 0xff), //     Physical Maximum (235)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0xC0, //   End Collection
-	//-----------------------------------------------
-	0xA1, 0x02, //   Collection (Logical)
-	0x05, 0x0D, //     Usage Page (Digitizer)
-	0x09, 0x42, //     Usage (Tip Switch)
-	0x15, 0x00, //     Logical Minimum (0)
-	0x25, 0x01, //     Logical Maximum (1)
-	0x75, 0x01, //     Report Size (1)
-	0x95, 0x01, //     Report Count (1)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x09, 0x32, //     Usage (In Range)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x09, 0x47, //     Usage(Touch Valid)
-	0x81,
-	0x02, //     Input(Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x95, 0x05, //     Report Count (5)
-	0x81,
-	0x03, //     Input (Const,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x75, 0x08, //     Report Size (8)
-	0x09, 0x51, //     Usage (Contact identifier)
-	0x95, 0x01, //     Report Count (1)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x05, 0x01, //     Usage Page (Generic Desktop Ctrls)
-	0x15, 0x00, //     Logical Minimum (0)
-	0x26, (TOUCH_PAD_X_SIZE_DESC & 0xff),
-	((TOUCH_PAD_X_SIZE_DESC >> 8) & 0xff), //     Logical Maximum (4095)
-	0x75, 0x10, //     Report Size (16)
-	0x55, 0x0D, //     Uint Exponent(-3)
-	0x65, 0x13, //     Unit(Inch,Englinear)
-	0x09, 0x30, //     Usage (X)
-	0x35, 0x00, //     Physical Minimum (0)
-	0x46, (MI_DISPLAY_X_SIZE_DESC & 0xff),
-	((MI_DISPLAY_X_SIZE_DESC >> 8) & 0xff), //     Physical Maximum (4095)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x09, 0x31, //     Usage (Y)
-	0x26, (TOUCH_PAD_Y_SIZE_DESC & 0xff),
-	((TOUCH_PAD_Y_SIZE_DESC >> 8) & 0xff), //     Logical Maximum (1884)
-	0x46, (MI_DISPLAY_Y_SIZE_DESC & 0xff),
-	((MI_DISPLAY_Y_SIZE_DESC >> 8) & 0xff), //     Physical Maximum (4095)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0xC0, //   End Collection
-	//-----------------------------------------------
-	0xA1, 0x02, //   Collection (Logical)
-	0x05, 0x0D, //     Usage Page (Digitizer)
-	0x09, 0x42, //     Usage (Tip Switch)
-	0x15, 0x00, //     Logical Minimum (0)
-	0x25, 0x01, //     Logical Maximum (1)
-	0x75, 0x01, //     Report Size (1)
-	0x95, 0x01, //     Report Count (1)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x09, 0x32, //     Usage (In Range)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x09, 0x47, //     Usage(Touch Valid)
-	0x81,
-	0x02, //     Input(Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x95, 0x05, //     Report Count (5)
-	0x81,
-	0x03, //     Input (Const,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x75, 0x08, //     Report Size (8)
-	0x09, 0x51, //     Usage (Contact identifier)
-	0x95, 0x01, //     Report Count (1)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x05, 0x01, //     Usage Page (Generic Desktop Ctrls)
-	0x15, 0x00, //     Logical Minimum (0)
-	0x26, (TOUCH_PAD_X_SIZE_DESC & 0xff),
-	((TOUCH_PAD_X_SIZE_DESC >> 8) & 0xff), //     Logical Maximum (4095)
-	0x75, 0x10, //     Report Size (16)
-	0x55, 0x0D, //     Uint Exponent(-3)
-	0x65, 0x13, //     Unit(Inch,Englinear)
-	0x09, 0x30, //     Usage (X)
-	0x35, 0x00, //     Physical Minimum (0)
-	0x46, (MI_DISPLAY_X_SIZE_DESC & 0xff),
-	((MI_DISPLAY_X_SIZE_DESC >> 8) & 0xff), //     Physical Maximum (4095)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x09, 0x31, //     Usage (Y)
-	0x26, (TOUCH_PAD_Y_SIZE_DESC & 0xff),
-	((TOUCH_PAD_Y_SIZE_DESC >> 8) & 0xff), //     Logical Maximum (1884)
-	0x46, (MI_DISPLAY_Y_SIZE_DESC & 0xff),
-	((MI_DISPLAY_Y_SIZE_DESC >> 8) & 0xff), //     Physical Maximum (4095)
-	0x81,
-	0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0xC0, //   End Collection
-	//-----------------------------------------------
-	0x05, 0x0D, //   Usage Page (Digitizer)
-	0x09, 0x54, //   Usage (Contact Ouunt)
-	0x95, 0x01, //   Report Count (1)
-	0x75, 0x08, //   Report Size (8)
-	0x15, 0x00, //   Logical Minimum (0)
-	0x25, 0x08, //   Logical Maximum (8)
-	0x81,
-	0x02, //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x09, 0x55, //   Usage (Contact Ouunt Maximum)
-	0xb1,
-	0x02, //   Feature (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
-	//-----------------------------------------------
-	// end
-	0xC0, // End Collection
+	0x05, 0x0D,		/* Usage Page (Digitizer) */
+	0x09, 0x05,		/* Usage (Touch Pad) */
+	0xA1, 0x01,		/* Collection (Application) */
+	0x85, 0x19,		/*   Report ID (25) */
+	0x15, 0x00,		/*   Logical Minimum (0) */
+	0x25, 0x01,		/*   Logical Maximum (1) */
+	0x35, 0x00,		/*   Physical Minimum (0) */
+	0x45, 0x01,		/*   Physical Maximum (1) */
+	0x75, 0x01,		/*   Report Size (1) */
+	0x95, 0x02,		/*   Report Count (2) */
+	0x05, 0x09,		/*   Usage Page (Button) */
+	0x09, 0x01,		/*   Usage (Button 1) */
+	0x09, 0x02,		/*   Usage (Button 2) */
+	0x81, 0x02,		/*   Input (Data,Var,Abs) */
+	0x95, 0x06,		/*   Report Count (6) */
+	0x81, 0x01,		/*   Input (Cnst,Array,Abs) */
+	0x05, 0x0D,		/*   Usage Page (Digitizer) */
+	0x09, 0x22,		/*   Usage (Finger) */
+	0xA1, 0x02,		/*   Collection (Logical) */
+	0x09, 0x42,		/*     Usage (Tip Switch) */
+	0x15, 0x00,		/*     Logical Minimum (0) */
+	0x25, 0x01,		/*     Logical Maximum (1) */
+	0x75, 0x01,		/*     Report Size (1) */
+	0x95, 0x01,		/*     Report Count (1) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x09, 0x32,		/*     Usage (In Range) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x09, 0x47,		/*     Usage (Confidence) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x95, 0x05,		/*     Report Count (5) */
+	0x81, 0x03,		/*     Input (Cnst,Var,Abs) */
+	0x75, 0x08,		/*     Report Size (8) */
+	0x09, 0x51,		/*     Usage (Contact Identifier) */
+	0x95, 0x01,		/*     Report Count (1) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x15, 0x00,		/*     Logical Minimum (0) */
+	0x26, 0xFF, 0xFF,	/*     Logical Maximum (65535) */
+	0x75, 0x10,		/*     Report Size (16) */
+	0x09, 0x30,		/*     Usage (Tip Pressure) */
+	0x95, 0x01,		/*     Report Count (1) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x05, 0x01,		/*     Usage Page (Generic Desktop) */
+	0x15, 0x00,		/*     Logical Minimum (0) */
+	0x26, 0x7F, 0x0C,	/*     Logical Maximum (3199) */
+	0x75, 0x10,		/*     Report Size (16) */
+	0x55, 0x0F,		/*     Unit Exponent (-1) */
+	0x65, 0x11,		/*     Unit (Centimeter) */
+	0x09, 0x30,		/*     Usage (X) */
+	0x35, 0x00,		/*     Physical Minimum (0) */
+	0x46, 0x5E, 0x00,	/*     Physical Maximum (94) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x09, 0x31,		/*     Usage (Y) */
+	0x26, 0x57, 0x08,	/*     Logical Maximum (2135) */
+	0x46, 0x2A, 0x00,	/*     Physical Maximum (42) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0xC0,			/*   End Collection */
+	0xA1, 0x02,		/*   Collection (Logical) */
+	0x05, 0x0D,		/*     Usage Page (Digitizer) */
+	0x09, 0x42,		/*     Usage (Tip Switch) */
+	0x15, 0x00,		/*     Logical Minimum (0) */
+	0x25, 0x01,		/*     Logical Maximum (1) */
+	0x75, 0x01,		/*     Report Size (1) */
+	0x95, 0x01,		/*     Report Count (1) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x09, 0x32,		/*     Usage (In Range) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x09, 0x47,		/*     Usage (Confidence) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x95, 0x05,		/*     Report Count (5) */
+	0x81, 0x03,		/*     Input (Cnst,Var,Abs) */
+	0x75, 0x08,		/*     Report Size (8) */
+	0x09, 0x51,		/*     Usage (Contact Identifier) */
+	0x95, 0x01,		/*     Report Count (1) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x15, 0x00,		/*     Logical Minimum (0) */
+	0x26, 0xFF, 0xFF,	/*     Logical Maximum (65535) */
+	0x75, 0x10,		/*     Report Size (16) */
+	0x09, 0x30,		/*     Usage (Tip Pressure) */
+	0x95, 0x01,		/*     Report Count (1) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x05, 0x01,		/*     Usage Page (Generic Desktop) */
+	0x15, 0x00,		/*     Logical Minimum (0) */
+	0x26, 0x7F, 0x0C,	/*     Logical Maximum (3199) */
+	0x75, 0x10,		/*     Report Size (16) */
+	0x55, 0x0F,		/*     Unit Exponent (-1) */
+	0x65, 0x11,		/*     Unit (Centimeter) */
+	0x09, 0x30,		/*     Usage (X) */
+	0x35, 0x00,		/*     Physical Minimum (0) */
+	0x46, 0x5E, 0x00,	/*     Physical Maximum (94) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x09, 0x31,		/*     Usage (Y) */
+	0x26, 0x57, 0x08,	/*     Logical Maximum (2135) */
+	0x46, 0x2A, 0x00,	/*     Physical Maximum (42) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0xC0,			/*   End Collection */
+	0xA1, 0x02,		/*   Collection (Logical) */
+	0x05, 0x0D,		/*     Usage Page (Digitizer) */
+	0x09, 0x42,		/*     Usage (Tip Switch) */
+	0x15, 0x00,		/*     Logical Minimum (0) */
+	0x25, 0x01,		/*     Logical Maximum (1) */
+	0x75, 0x01,		/*     Report Size (1) */
+	0x95, 0x01,		/*     Report Count (1) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x09, 0x32,		/*     Usage (In Range) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x09, 0x47,		/*     Usage (Confidence) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x95, 0x05,		/*     Report Count (5) */
+	0x81, 0x03,		/*     Input (Cnst,Var,Abs) */
+	0x75, 0x08,		/*     Report Size (8) */
+	0x09, 0x51,		/*     Usage (Contact Identifier) */
+	0x95, 0x01,		/*     Report Count (1) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x15, 0x00,		/*     Logical Minimum (0) */
+	0x26, 0xFF, 0xFF,	/*     Logical Maximum (65535) */
+	0x75, 0x10,		/*     Report Size (16) */
+	0x09, 0x30,		/*     Usage (Tip Pressure) */
+	0x95, 0x01,		/*     Report Count (1) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x05, 0x01,		/*     Usage Page (Generic Desktop) */
+	0x15, 0x00,		/*     Logical Minimum (0) */
+	0x26, 0x7F, 0x0C,	/*     Logical Maximum (3199) */
+	0x75, 0x10,		/*     Report Size (16) */
+	0x55, 0x0F,		/*     Unit Exponent (-1) */
+	0x65, 0x11,		/*     Unit (Centimeter) */
+	0x09, 0x30,		/*     Usage (X) */
+	0x35, 0x00,		/*     Physical Minimum (0) */
+	0x46, 0x5E, 0x00,	/*     Physical Maximum (94) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0x09, 0x31,		/*     Usage (Y) */
+	0x26, 0x57, 0x08,	/*     Logical Maximum (2135) */
+	0x46, 0x2A, 0x00,	/*     Physical Maximum (42) */
+	0x81, 0x02,		/*     Input (Data,Var,Abs) */
+	0xC0,			/*   End Collection */
+	0x05, 0x0D,		/*   Usage Page (Digitizer) */
+	0x09, 0x54,		/*   Usage (Contact Count) */
+	0x95, 0x01,		/*   Report Count (1) */
+	0x75, 0x08,		/*   Report Size (8) */
+	0x15, 0x00,		/*   Logical Minimum (0) */
+	0x25, 0x08,		/*   Logical Maximum (8) */
+	0x81, 0x02,		/*   Input (Data,Var,Abs) */
+	0x09, 0x55,		/*   Usage (Contact Count Maximum) */
+	0xB1, 0x02,		/*   Feature (Data,Var,Abs) */
+	0x06, 0x00, 0xFF,	/*   Usage Page (Vendor Defined) */
+	0x09, 0xC5,		/*   Usage (0xC5) */
+	0x15, 0x00,		/*   Logical Minimum (0) */
+	0x26, 0xFF, 0x00,	/*   Logical Maximum (255) */
+	0x75, 0x08,		/*   Report Size (8) */
+	0x96, 0x00, 0x01,	/*   Report Count (256) */
+	0xB1, 0x02,		/*   Feature (Data,Var,Abs) */
+	0xC0,			/* End Collection */
 };
 
 // Vendor:
