@@ -504,6 +504,7 @@
 	800 100
 	65536 200>;
 	enable_fv_dec_by_cc = <1>;
+	smart_bypass_support = <1>;
 };
 
 &soc_limit {
