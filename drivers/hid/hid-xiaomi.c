@@ -83,7 +83,23 @@ static __u8 *xiaomi_report_fixup(struct hid_device *hdev, __u8 *rdesc,
  * on the keyboard usage page, so the input layer would turn every sample into
  * a Keypad Plus press and every gesture into keypad navigation. Keep them off
  * the input devices.
+ *
+ * Report 2 also carries the Focus Pen's side buttons as page and arrow keys,
+ * so only the gesture usages are dropped from it.
  */
+static bool xiaomi_pen_gesture(struct hid_usage *usage)
+{
+	switch (usage->hid) {
+	case HID_UP_KEYBOARD | 0x58:
+	case HID_UP_KEYBOARD | 0x5b:
+	case HID_UP_KEYBOARD | 0x61:
+	case HID_UP_KEYBOARD | 0x6e:
+		return true;
+	}
+
+	return false;
+}
+
 static int xiaomi_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 				struct hid_field *field, struct hid_usage *usage,
 				unsigned long **bit, int *max)
@@ -93,6 +109,9 @@ static int xiaomi_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 
 	switch (field->report->id) {
 	case 2:
+		if (xiaomi_pen_gesture(usage))
+			return -1;
+		break;
 	case 5:
 	case 6:
 		return -1;
